@@ -1,0 +1,104 @@
+# The test suite on every push to main and every pull request, and once a week (a
+# compiler or runner change shows without a push). Downloads the MATLAB reference data
+# from Zenodo with scripts/get_fixtures.sh (cached by the script, which pins the
+# checksum), builds the library and its tests, and runs tests/report/build_report.py,
+# which writes one page with the result of every test and the measured error of every
+# tolerance check. From main, the page is published on GitHub Pages once the
+# repository is public.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 4 * * 1"          # Mondays, 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    env:
+      # An absolute path without '..': actions/cache refuses relative segments.
+      FIXTURES: /home/runner/iceberg-cpp-fixtures
+    steps:
+      # No submodules: JUCE is only needed for the app.
+      - uses: actions/checkout@v4
+
+      - name: Install the dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q cmake libeigen3-dev
+
+      - name: Cache the reference data
+        id: fixtures
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.FIXTURES }}
+          key: fixtures-${{ hashFiles('scripts/get_fixtures.sh') }}
+
+      - name: Download the reference data
+        if: steps.fixtures.outputs.cache-hit != 'true'
+        run: sh scripts/get_fixtures.sh "$FIXTURES"
+
+      - name: Cache the fetched libraries
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'tests/CMakeLists.txt') }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DICEBERG_FIXTURES_DIR="$FIXTURES" -DICEBERG_REQUIRE_FIXTURES=ON
+          cmake --build build -j
+
+      - name: Run the tests and build the report
+        id: run
+        continue-on-error: true        # the page goes out also when a test failed: that is when it is read
+        timeout-minutes: 30
+        run: python3 tests/report/build_report.py build --out tests/report/out
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: report
+          path: tests/report/out/
+
+      - uses: actions/upload-pages-artifact@v3
+        if: always() && hashFiles('tests/report/out/index.html') != ''
+        with:
+          path: tests/report/out/
+
+      - name: Fail when a test failed
+        if: steps.run.outcome != 'success'
+        run: |
+          echo "::error::some tests failed or the run stopped: see the report and the log"
+          exit 1
+
+  # GitHub Pages needs a public repository on a free account; until then this job
+  # does not run.
+  pages:
+    needs: tests
+    if: >-
+      always() && needs.tests.result != 'skipped' && github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request' && github.event.repository.private == false
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,54 @@
+diff --git a/modules/juce_core/native/juce_SharedCode_posix.h b/modules/juce_core/native/juce_SharedCode_posix.h
+index 85a72bec0e..501e9650f8 100644
+--- a/modules/juce_core/native/juce_SharedCode_posix.h
++++ b/modules/juce_core/native/juce_SharedCode_posix.h
+@@ -32,6 +32,12 @@
+   ==============================================================================
+ */
+ 
++// macOS Tahoe / AppleClang 21 patch: re-declare POSIX `kill` and
++// `sigaction` in the global namespace to satisfy name lookup. See
++// patches/JUCE_PATCHES.md.
++extern "C" int kill(pid_t, int);
++extern "C" int sigaction(int, const struct sigaction*, struct sigaction*);
++
+ namespace juce
+ {
+ 
+@@ -160,7 +166,7 @@ inline int juce_siginterrupt ([[maybe_unused]] int sig, [[maybe_unused]] int fla
+      using juce_sigactionflags_type = int;
+     #endif
+ 
+-    struct ::sigaction act;
++    struct sigaction act;
+     (void) ::sigaction (sig, nullptr, &act);
+ 
+     if (flag != 0)
+diff --git a/modules/juce_core/system/juce_PlatformDefs.h b/modules/juce_core/system/juce_PlatformDefs.h
+index f5d6e9b563..a82322ad47 100644
+--- a/modules/juce_core/system/juce_PlatformDefs.h
++++ b/modules/juce_core/system/juce_PlatformDefs.h
+@@ -77,7 +77,7 @@ namespace juce
+       crash or not, depending on the platform.
+       @see jassert()
+   */
+-  #define JUCE_BREAK_IN_DEBUGGER        { ::kill (0, SIGTRAP); }
++  #define JUCE_BREAK_IN_DEBUGGER        { kill (0, SIGTRAP); }
+ #elif JUCE_MSVC
+   #ifndef __INTEL_COMPILER
+     #pragma intrinsic (__debugbreak)
+diff --git a/modules/juce_core/system/juce_SystemStats.cpp b/modules/juce_core/system/juce_SystemStats.cpp
+index 6dafa07185..5f49463005 100644
+--- a/modules/juce_core/system/juce_SystemStats.cpp
++++ b/modules/juce_core/system/juce_SystemStats.cpp
+@@ -32,6 +32,10 @@
+   ==============================================================================
+ */
+ 
++// macOS Tahoe / AppleClang 21 patch: re-declare POSIX `kill` in the
++// global namespace to satisfy name lookup. See patches/JUCE_PATCHES.md.
++extern "C" int kill(pid_t, int);
++
+ namespace juce
+ {
+ 

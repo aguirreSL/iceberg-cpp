@@ -1,0 +1,16 @@
+build/
+build-*/
+vcpkg_installed/
+*.o
+*.a
+*.so
+*.dylib
+*.dSYM/
+.DS_Store
+.cache/
+compile_commands.json
+.vscode/
+.idea/
+tests/report/out/
+.venv/
+__pycache__/

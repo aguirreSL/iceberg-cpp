@@ -1,0 +1,52 @@
+cff-version: 1.2.0
+message: >-
+  If you use Iceberg, please cite the thesis that proposes the method (the preferred
+  citation below). To refer to this implementation, cite the software with its version.
+title: "Iceberg C++: loudspeaker-based room auralization (library and app)"
+type: software
+authors:
+  - family-names: Aguirre
+    given-names: Sergio Luiz
+    orcid: "https://orcid.org/0000-0003-2428-7109"
+version: 0.2.0
+date-released: 2026-10-22
+repository-code: "https://github.com/aguirreSL/iceberg-cpp"
+license:
+  - BSD-3-Clause
+  - AGPL-3.0-only
+keywords:
+  - auralization
+  - room acoustics
+  - Ambisonics
+  - VBAP
+  - hearing research
+  - C++
+references:
+  - type: data
+    title: "Reference data for iceberg-cpp (Iceberg MATLAB v1.0.0)"
+    authors:
+      - family-names: Aguirre
+        given-names: Sergio Luiz
+        orcid: "https://orcid.org/0000-0003-2428-7109"
+    doi: 10.5281/zenodo.23543831
+    year: 2026
+  - type: software
+    title: "Iceberg (MATLAB)"
+    authors:
+      - family-names: Aguirre
+        given-names: Sergio Luiz
+        orcid: "https://orcid.org/0000-0003-2428-7109"
+    repository-code: "https://github.com/aguirreSL/Iceberg"
+preferred-citation:
+  type: thesis
+  title: "Iceberg: a loudspeaker-based room auralization method for auditory research"
+  authors:
+    - family-names: Aguirre
+      given-names: Sergio Luiz
+      orcid: "https://orcid.org/0000-0003-2428-7109"
+  thesis-type: PhD thesis
+  institution:
+    name: University of Nottingham
+  year: 2023
+  month: 7
+  url: "https://repository.nottingham.ac.uk/handle/123456789/58572"

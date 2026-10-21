@@ -1,0 +1,208 @@
+// Tests for io/layout_loader: reading a loudspeaker layout JSON file in either
+// format (a "speakers" list, or the MATLAB fixture format with lsArray,
+// activeLSNumbers and ls_dir), the rejection of layouts it cannot render, and
+// rendering on the example layouts.
+#include "io/calibration_loader.h"
+#include "io/layout_loader.h"
+#include "rendering/iceberg.h"
+#include "test_helpers.h"
+
+#include <gtest/gtest.h>
+
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
+#include <cmath>
+#include <string>
+#include <vector>
+
+#ifndef ICEBERG_FIXTURES_DIR
+#error "ICEBERG_FIXTURES_DIR must be defined by CMake"
+#endif
+
+namespace {
+
+std::filesystem::path tmp_json(const std::string& name) {
+    return std::filesystem::temp_directory_path() /
+           ("iceberg_layout_test_" + name + ".json");
+}
+
+void write_file(const std::filesystem::path& p, const std::string& body) {
+    std::ofstream out(p);
+    out << body;
+}
+
+// A speakers-format file listing four loudspeakers at 180, 270, 0 and 90
+// degrees loads in file order: the azimuth array and the direction matrix
+// follow that order (first direction: azimuth 180, elevation 0), and the
+// active numbers run from 1 to 4.
+TEST(LayoutLoader, SpeakersFormatHappyPath) {
+    const auto p = tmp_json("speakers_happy");
+    write_file(p, R"({
+        "name": "Cardinal 4 LS",
+        "speakers": [
+            {"label": "back",  "azimuth": 180, "elevation": 0},
+            {"label": "left",  "azimuth": 270, "elevation": 0},
+            {"label": "front", "azimuth": 0,   "elevation": 0},
+            {"label": "right", "azimuth": 90,  "elevation": 0}
+        ]
+    })");
+
+    const auto cfg = iceberg::io::load_layout_json(p.string());
+
+    EXPECT_EQ(cfg.ls_array.size(), 4);
+    EXPECT_EQ(cfg.ls_dir.rows(), 4);
+    EXPECT_EQ(cfg.active_ls_numbers.size(), 4);
+    EXPECT_EQ(cfg.ls_array(0), 180);
+    EXPECT_EQ(cfg.ls_array(1), 270);
+    EXPECT_EQ(cfg.ls_array(2), 0);
+    EXPECT_EQ(cfg.ls_array(3), 90);
+    EXPECT_EQ(cfg.ls_dir(0, 0), 180.0);
+    EXPECT_EQ(cfg.ls_dir(0, 1), 0.0);
+    // active_ls_numbers convention: 1..n in speakers order.
+    EXPECT_EQ(cfg.active_ls_numbers(0), 1);
+    EXPECT_EQ(cfg.active_ls_numbers(3), 4);
+    std::filesystem::remove(p);
+}
+
+// A speakers-format file with three loudspeakers, below the minimum of four,
+// must be rejected with std::runtime_error.
+TEST(LayoutLoader, ThrowsOnBelowMinimumSpeakers) {
+    const auto p = tmp_json("below_min");
+    write_file(p, R"({
+        "speakers": [
+            {"label": "a", "azimuth": 0,   "elevation": 0},
+            {"label": "b", "azimuth": 90,  "elevation": 0},
+            {"label": "c", "azimuth": 180, "elevation": 0}
+        ]
+    })");
+
+    EXPECT_THROW(iceberg::io::load_layout_json(p.string()),
+                 std::runtime_error);
+    std::filesystem::remove(p);
+}
+
+// A speakers-format file with one loudspeaker at 30 degrees of elevation must
+// be rejected with std::runtime_error, since only horizontal layouts
+// (elevation 0) are rendered.
+TEST(LayoutLoader, ThrowsOnNonZeroElevation) {
+    const auto p = tmp_json("non_zero_ele");
+    write_file(p, R"({
+        "speakers": [
+            {"label": "a", "azimuth": 0,   "elevation": 0},
+            {"label": "b", "azimuth": 90,  "elevation": 0},
+            {"label": "c", "azimuth": 180, "elevation": 0},
+            {"label": "d", "azimuth": 270, "elevation": 30}
+        ]
+    })");
+
+    EXPECT_THROW(iceberg::io::load_layout_json(p.string()),
+                 std::runtime_error);
+    std::filesystem::remove(p);
+}
+
+// A JSON file that matches neither layout format must be rejected with
+// std::runtime_error.
+TEST(LayoutLoader, ThrowsOnUnrecognizedSchema) {
+    const auto p = tmp_json("no_schema");
+    write_file(p, R"({"foo": "bar"})");
+
+    EXPECT_THROW(iceberg::io::load_layout_json(p.string()),
+                 std::runtime_error);
+    std::filesystem::remove(p);
+}
+
+// In the speakers format every listed loudspeaker is active: a file of six
+// loudspeakers every 60 degrees loads with the active numbers 1 to 6 in file
+// order.
+TEST(LayoutLoader, AllSpeakersActiveByConvention) {
+    const auto p = tmp_json("all_active");
+    write_file(p, R"({
+        "speakers": [
+            {"label": "a", "azimuth": 0,   "elevation": 0},
+            {"label": "b", "azimuth": 60,  "elevation": 0},
+            {"label": "c", "azimuth": 120, "elevation": 0},
+            {"label": "d", "azimuth": 180, "elevation": 0},
+            {"label": "e", "azimuth": 240, "elevation": 0},
+            {"label": "f", "azimuth": 300, "elevation": 0}
+        ]
+    })");
+
+    const auto cfg = iceberg::io::load_layout_json(p.string());
+
+    EXPECT_EQ(cfg.active_ls_numbers.size(), 6);
+    for (Eigen::Index i = 0; i < 6; ++i) {
+        EXPECT_EQ(cfg.active_ls_numbers(i), static_cast<int>(i + 1));
+    }
+    std::filesystem::remove(p);
+}
+
+// The config.json of a reference case generated by Iceberg MATLAB v1.0.0 (the
+// 24-position ring of the rt_05 sweep) loads in the fixture format and keeps
+// its active subset in order: positions 13, 19, 1 and 7 (0, 90, 180 and 270
+// degrees), with one direction row for each.
+TEST(LayoutLoader, FixtureFormatWorksOnV1Config) {
+    ICEBERG_SKIP_IF_NO_FIXTURES();
+    // v1.0.0 fixture config.json files use the MATLAB-fixture format with
+    // lsArray + activeLSNumbers + ls_dir as separate arrays (plus render
+    // options the loader ignores). Verify the auto-dispatch keeps the
+    // active subset and its order.
+    const auto cfg = iceberg::io::load_layout_json(
+        iceberg::test::fixture_file("sweep/rt_05/config.json"));
+
+    EXPECT_EQ(cfg.ls_array.size(), 24);
+    EXPECT_EQ(cfg.active_ls_numbers.size(), 4);
+    // Default layout 0, 90, 180, 270 → activeLSNumbers = [13, 19, 1, 7].
+    EXPECT_EQ(cfg.active_ls_numbers(0), 13);
+    EXPECT_EQ(cfg.active_ls_numbers(1), 19);
+    EXPECT_EQ(cfg.active_ls_numbers(2), 1);
+    EXPECT_EQ(cfg.active_ls_numbers(3), 7);
+    EXPECT_EQ(cfg.ls_dir.rows(), 4);
+    EXPECT_EQ(cfg.ls_dir(0, 0), 0.0);
+    EXPECT_EQ(cfg.ls_dir(2, 0), 180.0);
+}
+
+
+// The layouts in examples/layouts, one per format (ring24_4active.json: 24
+// positions, 4 active; ring8_speakers.json: 8 positions), load with their
+// position count. A sine rendered at 30 degrees with a neutral calibration has
+// one output per position, is not silent, and is exactly zero where not in use.
+TEST(LayoutLoader, ExampleLayoutsLoadAndRender) {
+    struct Case {
+        const char* file;
+        Eigen::Index ring;
+        std::vector<Eigen::Index> silent;   // 0-based output channels
+    };
+    const Case cases[] = {
+        // 24 positions, in use at 180, 270, 0 and 90 (positions 1, 7, 13, 19).
+        {"ring24_4active.json", 24, {1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23}},
+        {"ring8_speakers.json", 8, {}},
+    };
+    iceberg::Signal signal;
+    signal.samples = Eigen::MatrixXf(1024, 1);
+    for (Eigen::Index i = 0; i < 1024; ++i) {
+        signal.samples(i, 0) = static_cast<float>(std::sin(0.05 * static_cast<double>(i)));
+    }
+    signal.sample_rate = 44100.0;
+    iceberg::Signal ir;
+    ir.samples = Eigen::MatrixXf::Zero(4096, 4);
+    ir.samples(100, 0) = 1.0f;   // W
+    ir.samples(100, 1) = 0.5f;   // X
+    ir.sample_rate = 44100.0;
+
+    for (const Case& c : cases) {
+        auto cfg = iceberg::io::load_layout_json(
+            std::string(ICEBERG_EXAMPLES_DIR) + "/layouts/" + c.file);
+        ASSERT_EQ(cfg.ls_array.size(), c.ring) << c.file;
+        cfg.calibration = iceberg::io::neutral_calibration(static_cast<int>(c.ring));
+        const auto out = iceberg::rendering::iceberg(signal, ir, 30.0, 80.0, cfg);
+        ASSERT_EQ(out.samples.cols(), c.ring) << c.file;
+        EXPECT_GT(out.samples.cwiseAbs().maxCoeff(), 0.0f) << c.file;
+        for (const Eigen::Index ch : c.silent) {
+            EXPECT_EQ(out.samples.col(ch).cwiseAbs().maxCoeff(), 0.0f)
+                << c.file << ": position " << ch + 1 << " not in use but not silent";
+        }
+    }
+}
+
+}  // namespace

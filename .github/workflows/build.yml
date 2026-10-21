@@ -1,0 +1,268 @@
+name: build
+
+# Two jobs (the tests and their report are in tests.yml):
+#   package  a v* tag, or a dispatch with `-f package=true`: the app built and
+#            packaged on macOS, Windows and Linux. It takes long, so it runs only
+#            then.
+#   release  a v* tag: attaches the packages to a GitHub Release.
+#
+# `gh workflow run build.yml -f package=true` checks the app after a toolchain
+# change.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'Build the app packages on macOS, Windows and Linux (long)'
+        required: false
+        default: false
+        type: boolean
+      os:
+        description: 'Which OS to package. Ignored unless `package` is checked.'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - macos-latest
+          - ubuntu-latest
+          - windows-latest
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Release work: 3 OSes, GUI, installers. Tags and manual dispatch only.
+  # ---------------------------------------------------------------------
+  package:
+    name: ${{ matrix.os }}
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.package)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Kept false on purpose: for a release you want the status of all
+      # three platforms in one run, not just the first failure.
+      fail-fast: false
+      matrix:
+        # Surgical rerun of one platform:
+        #   gh workflow run build.yml -f package=true -f os=windows-latest
+        # Tag pushes, and dispatches with package=true and os=all, run
+        # the full matrix.
+        os: ${{ (github.event_name == 'workflow_dispatch' && inputs.os != 'all') && fromJson(format('["{0}"]', inputs.os)) || fromJson('["macos-latest","ubuntu-latest","windows-latest"]') }}
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # ---- Platform deps ----
+      - name: Install macOS deps
+        if: matrix.os == 'macos-latest'
+        run: brew install cmake eigen
+
+      - name: Install Linux deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake libeigen3-dev \
+            libfreetype6-dev libfontconfig1-dev \
+            libx11-dev libxinerama-dev libxrandr-dev libxcursor-dev \
+            libxcomposite-dev libxext-dev libxrender-dev \
+            libasound2-dev libjack-jackd2-dev \
+            libcurl4-openssl-dev \
+            libwebkit2gtk-4.1-dev || \
+          sudo apt-get install -y libwebkit2gtk-4.0-dev
+
+      - name: Cache vcpkg (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/vcpkg_installed
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: Install Windows deps (vcpkg)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          "$VCPKG_INSTALLATION_ROOT/vcpkg" install --triplet x64-windows
+
+      # ---- FetchContent cache ----
+      - name: Cache CMake _deps
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'tests/CMakeLists.txt') }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+
+      # ---- Configure ----
+      # A universal app: Apple silicon and Intel Macs.
+      - name: Configure (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" \
+            -DICEBERG_BUILD_GUI=ON \
+            -DICEBERG_REQUIRE_FIXTURES=OFF
+
+      - name: Configure (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DICEBERG_BUILD_GUI=ON \
+            -DICEBERG_REQUIRE_FIXTURES=OFF
+
+      - name: Configure (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          cmake -S . -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DICEBERG_BUILD_GUI=ON `
+            -DICEBERG_REQUIRE_FIXTURES=OFF `
+            "-DCMAKE_TOOLCHAIN_FILE=$Env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows
+
+      # ---- Build ----
+      # Ubuntu free-tier runner (4 vCPU, 16 GB) OOMs at -j 4 because
+      # heavy JUCE / webkit2gtk translation units peak ~3-4 GB each.
+      # SIGTERM (exit 143) confirmed via run 25007635633. Cap at -j 2
+      # for Linux only; macOS / Windows runners cope at default -j.
+      - name: Build (Linux, -j 2 to avoid OOM)
+        if: matrix.os == 'ubuntu-latest'
+        run: cmake --build build --config Release -j 2
+
+      - name: Build (macOS / Windows)
+        if: matrix.os != 'ubuntu-latest'
+        run: cmake --build build --config Release -j
+
+      # The tests again on each system, with the app's build settings. Without
+      # the MATLAB reference data the comparisons skip; tests.yml runs them.
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+        env:
+          CTEST_OUTPUT_ON_FAILURE: '1'
+
+      # The runner is Apple silicon: the Intel half of the universal build runs
+      # under Rosetta.
+      - name: Test the Intel slice (macOS, under Rosetta)
+        if: matrix.os == 'macos-latest'
+        run: |
+          sudo softwareupdate --install-rosetta --agree-to-license
+          lipo -archs build/apps/iceberg-juce/iceberg-juce_artefacts/Release/Iceberg.app/Contents/MacOS/Iceberg
+          cd build/tests
+          for t in test_*; do
+            [ -x "$t" ] || continue
+            arch -x86_64 "./$t" --gtest_brief=1 || exit 1
+          done
+
+      # ---- Package artifact ----
+      - name: Package macOS .app
+        if: matrix.os == 'macos-latest'
+        run: |
+          cd build/apps/iceberg-juce/iceberg-juce_artefacts/Release
+          zip -r "$GITHUB_WORKSPACE/Iceberg-macos.zip" Iceberg.app
+          cd "$GITHUB_WORKSPACE"
+          # The app's licence and the third-party notices beside the app.
+          zip -j Iceberg-macos.zip apps/iceberg-juce/LICENSE THIRD_PARTY_NOTICES.txt
+
+      - name: Package Linux
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir pkg
+          cp build/apps/iceberg-juce/iceberg-juce_artefacts/Release/Iceberg \
+            apps/iceberg-juce/LICENSE THIRD_PARTY_NOTICES.txt pkg/
+          tar czf Iceberg-linux.tar.gz -C pkg Iceberg LICENSE THIRD_PARTY_NOTICES.txt
+
+      - name: Install NSIS (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          # Ensure makensis is on PATH for the cpack step that follows.
+          $nsis = "C:\Program Files (x86)\NSIS"
+          echo $nsis | Out-File -FilePath $Env:GITHUB_PATH -Append
+
+      - name: Package Windows installer (NSIS)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        working-directory: build
+        run: |
+          cpack -G NSIS -C Release
+          # CPack lands the .exe in build/; rename to a stable name.
+          $pkg = Get-ChildItem -Filter "Iceberg-*.exe" | Select-Object -First 1
+          if ($pkg) {
+              Move-Item $pkg.FullName ../Iceberg-windows-installer.exe -Force
+          } else {
+              Write-Error "NSIS installer not produced"
+              exit 1
+          }
+
+      # retention-days 7: these only matter until the release
+      # job has pulled them, or until a dispatch run has been inspected.
+      - name: Upload artifact (macOS)
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Iceberg-macos
+          path: Iceberg-macos.zip
+          retention-days: 7
+
+      - name: Upload artifact (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Iceberg-linux
+          path: Iceberg-linux.tar.gz
+          retention-days: 7
+
+      - name: Upload artifact (Windows installer)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Iceberg-windows-installer
+          path: Iceberg-windows-installer.exe
+          retention-days: 7
+
+  # Auto-release on `git push --tags v*`. Pulls artifacts uploaded by
+  # the matrix `package` job (which ran in parallel) and attaches them
+  # to a freshly created GitHub Release. Manual `gh release create`
+  # remains an option for one-off polish (custom notes, etc).
+  release:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout (for release notes)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Stage release files
+        run: |
+          mkdir -p release
+          mv artifacts/Iceberg-macos/Iceberg-macos.zip               release/ || true
+          mv artifacts/Iceberg-linux/Iceberg-linux.tar.gz            release/ || true
+          mv artifacts/Iceberg-windows-installer/Iceberg-windows-installer.exe release/ || true
+          ls -la release
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "Iceberg ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            release/*

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "iceberg-cpp",
+  "version-string": "0.2.0",
+  "description": "C++ port of the Iceberg auralisation method.",
+  "dependencies": [
+    "eigen3"
+  ]
+}

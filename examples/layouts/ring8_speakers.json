@@ -1,0 +1,13 @@
+{
+  "name": "8 loudspeakers every 45 degrees",
+  "speakers": [
+    {"label": "front",       "azimuth": 0,   "elevation": 0},
+    {"label": "front-left",  "azimuth": 45,  "elevation": 0},
+    {"label": "left",        "azimuth": 90,  "elevation": 0},
+    {"label": "back-left",   "azimuth": 135, "elevation": 0},
+    {"label": "back",        "azimuth": 180, "elevation": 0},
+    {"label": "back-right",  "azimuth": 225, "elevation": 0},
+    {"label": "right",       "azimuth": 270, "elevation": 0},
+    {"label": "front-right", "azimuth": 315, "elevation": 0}
+  ]
+}
