@@ -203,6 +203,19 @@ jobs:
               exit 1
           }
 
+      # The same app without the installer, for machines that refuse a
+      # downloaded .exe. Built from the artefacts, not from the CPack tree,
+      # which also stages JUCE's and GoogleTest's install rules.
+      - name: Package Windows zip
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory pkg | Out-Null
+          Copy-Item build/apps/iceberg-juce/iceberg-juce_artefacts/Release/Iceberg.exe pkg/
+          Copy-Item apps/iceberg-juce/LICENSE pkg/LICENSE.txt
+          Copy-Item THIRD_PARTY_NOTICES.txt pkg/
+          Compress-Archive -Path pkg/* -DestinationPath Iceberg-windows.zip
+
       # retention-days 7: these only matter until the release
       # job has pulled them, or until a dispatch run has been inspected.
       - name: Upload artifact (macOS)
@@ -227,6 +240,14 @@ jobs:
         with:
           name: Iceberg-windows-installer
           path: Iceberg-windows-installer.exe
+          retention-days: 7
+
+      - name: Upload artifact (Windows zip)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Iceberg-windows
+          path: Iceberg-windows.zip
           retention-days: 7
 
   # Auto-release on `git push --tags v*`. Pulls artifacts uploaded by
@@ -256,6 +277,7 @@ jobs:
           mv artifacts/Iceberg-macos/Iceberg-macos.zip               release/ || true
           mv artifacts/Iceberg-linux/Iceberg-linux.tar.gz            release/ || true
           mv artifacts/Iceberg-windows-installer/Iceberg-windows-installer.exe release/ || true
+          mv artifacts/Iceberg-windows/Iceberg-windows.zip           release/ || true
           ls -la release
 
       - name: Create GitHub Release

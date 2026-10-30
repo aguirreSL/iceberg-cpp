@@ -22,6 +22,9 @@ The latest version, for each system (older versions and the release notes are on
   first time it has to be opened with a right-click and *Open*, then *Open* again.
 - Windows: [Iceberg-windows-installer.exe](https://github.com/aguirreSL/iceberg-cpp/releases/latest/download/Iceberg-windows-installer.exe).
   If SmartScreen warns, choose *More info*, then *Run anyway*.
+  Where a downloaded `.exe` is not allowed, the same app without the installer:
+  [Iceberg-windows.zip](https://github.com/aguirreSL/iceberg-cpp/releases/latest/download/Iceberg-windows.zip).
+  Unzip and run `Iceberg.exe`.
 - Linux: [Iceberg-linux.tar.gz](https://github.com/aguirreSL/iceberg-cpp/releases/latest/download/Iceberg-linux.tar.gz).
   Unpack and run `Iceberg`.
 

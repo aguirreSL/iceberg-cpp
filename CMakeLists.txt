@@ -139,13 +139,19 @@ if(ICEBERG_BUILD_GUI)
         install(DIRECTORY
             "${CMAKE_BINARY_DIR}/apps/iceberg-juce/iceberg-juce_artefacts/Release/"
             DESTINATION .
+            COMPONENT app
             FILES_MATCHING
                 PATTERN "*.exe"
                 PATTERN "*.dll"
         )
         install(FILES "${CMAKE_SOURCE_DIR}/apps/iceberg-juce/LICENSE"
-                DESTINATION . RENAME LICENSE.txt)
-        install(FILES "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.txt" DESTINATION .)
+                DESTINATION . RENAME LICENSE.txt COMPONENT app)
+        install(FILES "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.txt"
+                DESTINATION . COMPONENT app)
+        # Only the `app` component is packaged. JUCE and GoogleTest bring
+        # their own install rules (headers, .lib, juceaide.exe, CMake
+        # configs), and v0.2.0's installer shipped ~3,100 of those files.
+        set(CPACK_INSTALL_CMAKE_PROJECTS "${CMAKE_BINARY_DIR};iceberg_cpp;app;/")
         set(CPACK_GENERATOR "NSIS")
         set(CPACK_PACKAGE_NAME "Iceberg")
         set(CPACK_PACKAGE_VENDOR "Aguirre")
