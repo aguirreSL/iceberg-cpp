@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Packages
+
+- Windows: a zip with the app, for machines that do not allow a downloaded `.exe`
+  (`Iceberg-windows.zip`, also attached to the 0.2.0 release).
+- The Windows installer installs only the app, its licence and the third-party notices;
+  the 0.2.0 installer also copied the headers and libraries of JUCE and GoogleTest.
+
 ## 0.2.0 (beta)
 
 The first public version: the Iceberg method of Iceberg MATLAB v1.0.0 as a C++ library

@@ -204,8 +204,7 @@ jobs:
           }
 
       # The same app without the installer, for machines that refuse a
-      # downloaded .exe. Built from the artefacts, not from the CPack tree,
-      # which also stages JUCE's and GoogleTest's install rules.
+      # downloaded .exe.
       - name: Package Windows zip
         if: matrix.os == 'windows-latest'
         shell: pwsh
